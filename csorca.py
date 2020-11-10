@@ -18,13 +18,16 @@
 """
 Packages imports
 """
+import pygeos
 import numpy as np
 import time
 from shapely.geometry import Polygon, MultiPolygon, Point
-from shapely.affinity import translate, rotate
+from shapely.affinity import translate, rotate, scale
 import copy
 from IPython.display import SVG, display, clear_output
 from scipy.optimize import minimize, LinearConstraint, NonlinearConstraint
+import matplotlib.pyplot as plt
+
 
 
 
@@ -66,6 +69,7 @@ class Aircraft:
         self.position = np.array(position)
         self.trajectory = [np.array(position)]
         self.heading = np.array(heading)
+        self.headings = [np.array(heading)]
         self.destination = destination
         self.semi_plan = []
 
@@ -94,11 +98,12 @@ class Aircraft:
         geom = (vr, a_t1, a_t2, )
         # Check if relative speed lies in forbiden zone
         point = self.position + vr
-        conflict = (is_inside_the_cone(point, self.position, other.position, a_t1, a_t2)
-                    * (is_inside_the_circle(vr, a_b/tau, d/tau) 
-                       or not is_inside_the_circle(vr, np.array((0,0)), a_b[0]/tau)))
-        
-        return (conflict, geom)
+        radius = (1/tau)*np.sqrt(ro**2 - d**2)
+        alert = (is_inside_the_cone(point, self.position, other.position, a_t1, a_t2)
+                    and (is_inside_the_circle(vr, a_b/tau, d/tau) 
+                       or not is_inside_the_circle(vr, np.array((0,0)), radius)))
+
+        return (alert, geom)
 
 
     # Compute exhaust vector (c vector in [Durand, 2018])
@@ -112,9 +117,9 @@ class Aircraft:
 
 
     def compute_semi_plan(self, other, d, tau):
-        conflict, geom = self.detect_conflict(other, d, tau)
+        alert, geom = self.detect_conflict(other, d, tau)
         
-        if conflict:
+        if alert:
             vr, a_t1, a_t2 = geom
             c = self.exhaust_vector(vr, a_t1, a_t2)
             p_ij = list(c) + list([c.dot(-(self.heading + c/2))])
@@ -126,7 +131,6 @@ class Aircraft:
         else:
             yield []
             yield []
-
 
 
     def compute_heading(self):
@@ -160,12 +164,12 @@ class Aircraft:
             h_max = r_max.dot(self.heading)
             h_min = r_min.dot(self.heading)
 
-            turning_rate_constraints = [[h_max[1], -h_max[0]], [h_min[0], -h_min[1]]]
+            turning_rate_constraints = [[h_max[1], -h_max[0]], [h_min[1], -h_min[0]]]
 
             lin_const_list = [sp[0:-1] for sp in self.semi_plan] + turning_rate_constraints
             nb_lin_constr = len(lin_const_list)
 
-            lb = [sp[-1] for sp in self.semi_plan] + list(np.zeros(nb_lin_constr - len(self.semi_plan)))
+            lb = [-sp[-1] for sp in self.semi_plan] + list(np.zeros(len(turning_rate_constraints)))
             ub = list(np.inf*np.ones(nb_lin_constr))
 
             linear_constraint = LinearConstraint(lin_const_list, lb, ub)
@@ -218,6 +222,7 @@ class Simulation:
         self.step = 0
         self.alerts = 0
         self.separation_losses = 0
+        self.done = False
 
 
     def display(self):
@@ -227,14 +232,35 @@ class Simulation:
         aircrafts = [Polygon(Point(ac.position).buffer(self.d,1000), [Polygon(Point(ac.position).buffer(3,1000))]) for ac in self.aircraft]
         # Heading vectors
         arrow = Polygon([(0,-25), (37.5, 15), (25, 20), (50, 25), (45, 0), (40, 12.5)])
-        arrow = rotate(arrow, -45)
-        arrows = [rotate(translate(arrow, xoff=ac.position[0], yoff=ac.position[1]),np.arctan2(ac.heading[1], ac.heading[0]), use_radians=True, origin=tuple(ac.position))  for ac in self.aircraft]
+        arrow = scale(rotate(arrow, -45), xfact=0.80, yfact=0.80)
+        arrows = [rotate(translate(arrow, xoff=ac.position[0], yoff=ac.position[1]), np.arctan2(ac.heading[1], ac.heading[0]), use_radians=True, origin=tuple(ac.position))  for ac in self.aircraft]
         # All aircraft with vectors
         m = MultiPolygon([square] + aircrafts + arrows)
         # Display
         clear_output(wait=True)
         display(SVG(m._repr_svg_()))
         #time.sleep(0.1)
+    
+
+    def draw(self):
+        plt.figure()
+        plt.title('{} aircraft encounter'.format(len(self.aircraft)))
+        plt.xlim(0,500)
+        plt.ylim(0,500)
+        for i in range(len(self.aircraft)):
+            plt.scatter([x[0] for x in self.aircraft[i].trajectory], [x[1] for x in self.aircraft[i].trajectory], s=7)
+            for j in range(i+1, len(self.aircraft)):
+                x1 = [point1[0] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                y1 = [point1[1] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                plt.scatter(x1, y1, s=100, c='red', alpha=0.3)
+
+                x2 = [point2[0] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                y2 = [point2[1] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                plt.scatter(x2, y2, s=100, c='red', alpha=0.3)
+                plt.text(x=10., y=10., s='Separation losses : {} '.format(self.separation_losses), 
+                        bbox=dict(boxstyle="square",
+                                  ec=tuple(np.array((1., 0.8, 0.8))*(self.separation_losses>0) + np.array((0.8, 1., 0.8))*(self.separation_losses==0)),
+                                  fc=tuple(np.array((1., 0.8, 0.8))*(self.separation_losses>0) + np.array((0.8, 1., 0.8))*(self.separation_losses==0)),))
 
 
     def move(self):
@@ -242,63 +268,61 @@ class Simulation:
             if not aircraft.reached_destination(): 
                 aircraft.move(self.time_step)
             aircraft.trajectory.append(copy.deepcopy(aircraft.position))
+            aircraft.headings.append(copy.deepcopy(aircraft.heading))
 
 
     def run_one_step(self, display=False):
-        N = len(self.aircraft)
-        done = True
-        #print('\nStep : ', self.step)
-        
-        for i in range(N):
-            # Compute semi-plans
-            for j in range(i+1, N):
-                conflict = self.aircraft[i].detect_conflict(self.aircraft[j], self.d, self.tau)[0]
-                self.alerts += int(conflict)
-                p_ij, p_ji = self.aircraft[i].compute_semi_plan(self.aircraft[j], self.d, self.tau)
-                self.aircraft[i].semi_plan.extend(p_ij)
-                self.aircraft[j].semi_plan.extend(p_ji)
-
-            # Compute new heading
-            new_heading = self.aircraft[i].compute_heading()
-            self.aircraft[i].heading = new_heading
-            #print('New heading {} : {}'.format(i, self.aircraft[i].heading))
-            #print('New position {} : {}'.format(i, self.aircraft[i].position))
-
-            # Reinitialize semi-plan to empty lists
-            self.aircraft[i].semi_plan = []
+        if self.done:
+            print('Simulation is over')
+        else:
+            N = len(self.aircraft)
+            done = True
             
-            # update done 
-            done *= self.aircraft[i].reached_destination(epsilon=3)
-        
-        # Move aircrafts according to new headings and increment step count
-        self.move()
-        self.step += 1
-        self.time += self.time_step
+            for i in range(N):
+                # Compute semi-plans
+                for j in range(i+1, N):
+                    alert = self.aircraft[i].detect_conflict(self.aircraft[j], self.d, self.tau)[0]
+                    self.alerts += int(alert)
+                    p_ij, p_ji = self.aircraft[i].compute_semi_plan(self.aircraft[j], self.d, self.tau)
+                    self.aircraft[i].semi_plan.extend(p_ij)
+                    self.aircraft[j].semi_plan.extend(p_ji)
+                # Compute new heading
+                new_heading = self.aircraft[i].compute_heading()
+                self.aircraft[i].heading = new_heading
+                # Reinitialize semi-plan to empty lists
+                self.aircraft[i].semi_plan = []
+                
+                # update done 
+                done *= self.aircraft[i].reached_destination(epsilon=3)
+                self.done = done
+            
+            # Move aircrafts according to new headings and increment step count
+            self.move()
+            self.step += 1
+            self.time += self.time_step
 
-        # Check if separation losses occurs
-        for i in range(N):
-            for j in range(i+1, N):
-                self.separation_losses += int(
-                                               (np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d)
-                                                              )
-
-        #display
-        if display:
-            self.display()
-
-        # Return simulation status
-        return bool(done)
-
-
-    def run(self, display=True):
-        done = False
-        
-        while not done:
-            done = self.run_one_step()
+            # Check if separation losses occurs
+            for i in range(N):
+                for j in range(i+1, N):
+                    self.separation_losses += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d))
+            #display
             if display:
                 self.display()
 
 
+    def run(self, maxiter=np.inf, display=True, mute=False, draw=True):
+        start = time.time()
+        # Run simulation
+        while not (self.done or self.step > maxiter):
+            self.run_one_step(display=display)
+        # Print simulation information
+        if not mute:
+            exec_time = time.time() - start
+            mins, secs = int(exec_time//60), int(exec_time%60)
+            print('Execution time : {}min{}sec \nSteps : {} \nConflict alerts : {} \nSeparation losses : {}'.format(mins, secs, self.step, self.alerts, self.separation_losses))
+        # Plot trajectories
+        if draw:
+            self.draw()
 
 
 
