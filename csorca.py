@@ -223,6 +223,7 @@ class Simulation:
         self.alerts = 0
         self.separation_losses = 0
         self.done = False
+        self.conflict_matrix = np.zeros([len(aircraft), len(aircraft)])
 
 
     def display(self):
@@ -305,6 +306,7 @@ class Simulation:
             for i in range(N):
                 for j in range(i+1, N):
                     self.separation_losses += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d))
+                    self.conflict_matrix[i][j] += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d))
             #display
             if display:
                 self.display()
@@ -316,13 +318,16 @@ class Simulation:
         while not (self.done or self.step > maxiter):
             self.run_one_step(display=display)
         # Print simulation information
-        if not mute:
-            exec_time = time.time() - start
-            mins, secs = int(exec_time//60), int(exec_time%60)
-            print('Execution time : {}min{}sec \nSteps : {} \nConflict alerts : {} \nSeparation losses : {}'.format(mins, secs, self.step, self.alerts, self.separation_losses))
+        #if not mute:
+            #exec_time = time.time() - start
+            #mins, secs = int(exec_time//60), int(exec_time%60)
+        count_conflict = np.count_nonzero(self.conflict_matrix)
+            #print('Execution time : {}min{}sec \nSteps : {} \nConflict alerts : {} \nSeparation losses : {}'.format(mins, secs, self.step, self.alerts, count_conflict))
         # Plot trajectories
         if draw:
             self.draw()
+
+        return count_conflict
 
 
 
