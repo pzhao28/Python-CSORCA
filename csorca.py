@@ -84,7 +84,8 @@ class Aircraft:
         a_b = other.position - self.position
         ro = np.linalg.norm(a_b)
         vr = self.heading - other.heading
-        theta = np.arctan(d/ro)
+        #theta = np.arctan(d/ro)
+        theta = np.arcsin(d/ro)
         
         # tangent orientation vectors
         r1 = np.array(( (np.cos(theta), -np.sin(theta)),
@@ -212,7 +213,7 @@ Simulation representation
 
 class Simulation:
 
-    def __init__(self, aircraft, d, tau, time_step=3, area_size=500):
+    def __init__(self, aircraft, d, tau, time_step=30, area_size=500):
         self.aircraft = aircraft
         self.d = d
         self.tau = tau
@@ -245,24 +246,39 @@ class Simulation:
 
     def draw(self):
         plt.figure()
-        plt.title('{} aircraft encounter'.format(len(self.aircraft)))
-        plt.xlim(0,500)
-        plt.ylim(0,500)
-        for i in range(len(self.aircraft)):
-            plt.scatter([x[0] for x in self.aircraft[i].trajectory], [x[1] for x in self.aircraft[i].trajectory], s=7)
-            for j in range(i+1, len(self.aircraft)):
-                x1 = [point1[0] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
-                y1 = [point1[1] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
-                plt.scatter(x1, y1, s=100, c='red', alpha=0.3)
 
-                x2 = [point2[0] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
-                y2 = [point2[1] for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
-                plt.scatter(x2, y2, s=100, c='red', alpha=0.3)
+        #fig, ax = plt.subplots()
+        #plt.title('{} aircraft encounter'.format(len(self.aircraft)))
+        plt.xlim(0,500*0.16)
+        plt.ylim(-40,500*0.16-40)
+        plt.xlabel('nautical mile')
+        plt.ylabel('nautical mile')
+        colors = ['b','r','g']
+
+        for i in range(len(self.aircraft)):
+            #plt.scatter([x[0] for x in self.aircraft[i].trajectory], [x[1] for x in self.aircraft[i].trajectory], s=7)
+            ar_x = self.aircraft[i].trajectory[5][0]*0.16
+            ar_y = self.aircraft[i].trajectory[5][1]*0.16-40
+            ar_dx = self.aircraft[i].trajectory[6][0]*0.16 - self.aircraft[i].trajectory[5][0]*0.16
+            ar_dy = self.aircraft[i].trajectory[6][1]*0.16 - self.aircraft[i].trajectory[5][1]*0.16
+            plt.arrow(ar_x, ar_y, ar_dx, ar_dy, head_width=3, head_length=2, fc=colors[i], ec=colors[i])
+            plt.plot([x[0]*0.16 for x in self.aircraft[i].trajectory], [x[1]*0.16-40 for x in self.aircraft[i].trajectory], color = colors[i], label='path of ac{}'.format(i+1))
+            plt.plot([self.aircraft[i].trajectory[0][0]*0.16, self.aircraft[i].trajectory[-1][0]*0.16],[ self.aircraft[i].trajectory[0][1]*0.16-40, self.aircraft[i].trajectory[-1][1]*0.16-40], '--', color=colors[i])
+            '''for j in range(i+1, len(self.aircraft)):
+                x1 = [point1[0]*0.16-40 for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                y1 = [point1[1]*0.16-40 for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                plt.scatter(x1, y1, s=100, c='red', alpha=0.1)
+
+                x2 = [point2[0]*0.16-40 for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                y2 = [point2[1]*0.16-40 for point1, point2 in zip(self.aircraft[i].trajectory, self.aircraft[j].trajectory) if np.linalg.norm(point1 - point2) < self.d]
+                plt.scatter(x2, y2, s=100, c='red', alpha=0.1)
                 plt.text(x=10., y=10., s='Separation losses : {} '.format(self.separation_losses), 
                         bbox=dict(boxstyle="square",
                                   ec=tuple(np.array((1., 0.8, 0.8))*(self.separation_losses>0) + np.array((0.8, 1., 0.8))*(self.separation_losses==0)),
-                                  fc=tuple(np.array((1., 0.8, 0.8))*(self.separation_losses>0) + np.array((0.8, 1., 0.8))*(self.separation_losses==0)),))
+                                  fc=tuple(np.array((1., 0.8, 0.8))*(self.separation_losses>0) + np.array((0.8, 1., 0.8))*(self.separation_losses==0)),))'''
 
+        plt.legend()
+        plt.savefig('result_3ac')
 
     def move(self):
         for aircraft in self.aircraft:
@@ -294,7 +310,7 @@ class Simulation:
                 self.aircraft[i].semi_plan = []
                 
                 # update done 
-                done *= self.aircraft[i].reached_destination(epsilon=3)
+                done *= self.aircraft[i].reached_destination(epsilon=self.time_step)
                 self.done = done
             
             # Move aircrafts according to new headings and increment step count
@@ -306,7 +322,7 @@ class Simulation:
             for i in range(N):
                 for j in range(i+1, N):
                     self.separation_losses += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d))
-                    self.conflict_matrix[i][j] += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d))
+                    self.conflict_matrix[i][j] += int((np.linalg.norm(self.aircraft[i].position - self.aircraft[j].position) < self.d*0.8))
             #display
             if display:
                 self.display()
